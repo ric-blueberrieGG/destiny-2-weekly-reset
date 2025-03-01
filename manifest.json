@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Destiny 2 Weekly Reset",
+  "version": "1.0.1",
+  "description": "Displays weekly Destiny 2 activities from blueberries.gg",
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}
