@@ -6,9 +6,8 @@
   <style>
     body {
       font-family: 'Open Sans', sans-serif;
-      padding: 15px;
-      width: 500px;
-      min-height: 600px;
+      padding: 12px;
+      width: 520px;
       background-color: #171717;
       border-radius: 8px;
       box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
@@ -19,7 +18,14 @@
       font-size: 24px;
       font-weight: 700;
       color: #fff;
-      margin: 0 0 15px 0;
+      margin: 0 0 6px;
+      text-align: center;
+    }
+    .week-info {
+      font-size: 14px;
+      font-weight: 600;
+      color: #b0b0b0;
+      margin-bottom: 12px;
       text-align: center;
     }
     ul {
@@ -30,48 +36,112 @@
     li.week-entry {
       background: #252525;
       border-radius: 6px;
-      padding: 12px;
-      margin-bottom: 10px;
+      padding: 10px;
+      margin-bottom: 8px;
     }
-    .week-info {
-      font-size: 16px;
-      font-weight: 600;
-      color: #fff;
-      margin-bottom: 10px;
-      text-align: center;
+    .columns {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 15px;
+      margin: 0 10px;
     }
     h3 {
-      font-size: 18px;
+      font-size: 12px;
       font-weight: 700;
       color: #fff;
-      margin: 10px 0 8px;
+      text-transform: uppercase;
+      margin: 20px 0 6px 10px;
+      text-align: left;
+    }
+    .merged-header {
+      font-size: 12px;
+      font-weight: 700;
+      color: #fff;
+      text-transform: uppercase;
+      margin: 20px 0 6px;
       text-align: center;
     }
-    .activity-row {
+    .activity {
+      margin: 0 10px 10px;
       display: flex;
-      justify-content: space-between;
-      margin: 0 20px 6px;
-      font-size: 14px;
-      color: #e5e5e5;
+      align-items: center;
+      gap: 8px;
+    }
+    .activity-icon {
+      width: 20px;
+      height: 20px;
+      min-width: 20px;
+      filter: brightness(0) invert(1);
+      opacity: 0.9;
+    }
+    .activity-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
     }
     .activity-name {
-      flex: 1;
-      text-align: center;
+      font-size: 13px;
       font-weight: 600;
+      color: #e5e5e5;
+      display: block;
+      text-align: left;
+      line-height: 1.2;
     }
     .reward {
-      flex: 1;
-      text-align: center;
+      font-size: 12px;
       color: #7782ff;
+      text-align: left;
+      line-height: 1.2;
     }
     .reward-label {
       color: #e5e5e5;
+      font-weight: 600;
     }
     .standalone {
       font-size: 14px;
       color: #e5e5e5;
-      margin: 6px 0 6px 20px;
+      margin: 6px 10px;
       line-height: 1.4;
+      text-align: center;
+    }
+    .full-width {
+      font-size: 14px;
+      color: #e5e5e5;
+      margin: 6px 10px;
+      line-height: 1.4;
+      text-align: center;
+    }
+    .full-width h3 {
+      font-size: 12px;
+      font-weight: 700;
+      color: #fff;
+      text-transform: uppercase;
+      margin: 20px 0 6px;
+      text-align: center;
+    }
+    .full-width .activity {
+      margin: 0 10px 10px;
+      text-align: center;
+    }
+    .full-width .activity-name, .full-width .reward {
+      text-align: center;
+    }
+    .trials-row {
+      font-size: 13px;
+      color: #e5e5e5;
+      text-align: center;
+      margin: 0 10px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .trials-row .reward {
+      font-size: 13px;
+      color: #7782ff;
+      margin: 0 0 0 5px;
+      display: inline;
     }
     .label {
       font-weight: 600;
@@ -90,10 +160,10 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-top: 15px;
+      margin-top: 12px;
     }
     .logo img {
-      width: 100px;
+      width: 90px;
       height: auto;
     }
     .feedback-btn {
@@ -109,7 +179,6 @@
     }
     .feedback-btn:hover {
       background-color: #5f6ad9;
-      color: #fff;
     }
     img {
       width: 16px;
@@ -117,16 +186,34 @@
       vertical-align: middle;
       margin-right: 6px;
     }
+    .columns .activity {
+      margin: 0 10px 10px;
+      text-align: left;
+    }
+    .columns .activity-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: #e5e5e5;
+      display: block;
+      text-align: left;
+    }
+    .columns .reward {
+      font-size: 12px;
+      color: #7782ff;
+      text-align: left;
+      margin-top: 2px;
+    }
   </style>
 </head>
 <body>
   <h2>Destiny 2 Weekly Activities</h2>
+  <div class="week-info" id="weekInfo"></div>
   <ul id="activitiesList"></ul>
   <div class="footer">
     <div class="logo">
       <img src="logo.png" alt="Logo">
     </div>
-    <a href="mailto:ric@blueberries.gg?subject=Ideas + Bugs" class="feedback-btn">&#x1F4A1; Ideas + Bugs</a>
+    <a href="mailto:ric@blueberries.gg?subject=Ideas + Bugs" class="feedback-btn">&#128161; Ideas + Bugs</a>
   </div>
   <script src="popup.js"></script>
 </body>
