@@ -35,12 +35,6 @@ Note: When installing from GitHub:
 3. Click "Load unpacked"
 4. Select the `dist` directory
 
-### Loading in Firefox
-1. Open Firefox and go to `about:debugging`
-2. Click "This Firefox"
-3. Click "Load Temporary Add-on"
-4. Select any file in the `dist` directory
-
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
