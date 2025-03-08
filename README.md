@@ -1,13 +1,59 @@
 # Destiny 2 Weekly Reset Extension
 
-Get all the Destiny 2 activities and rewards available this week with this Chrome extension from [blueberries.gg](https://blueberries.gg).
+A browser extension that shows Destiny 2 weekly activities, including Nightfall, Raids, Dungeons, and more. Updates every Tuesday at reset from [blueberries.gg](https://blueberries.gg).
 
-## Download
-- [Chrome (.crx)](https://github.com/ric-blueberrieGG/destiny-2-weekly-reset/releases/download/Beta/Destiny.2.Weekly.Reset.Chrome.crx)
+## Features
 
-(Firefox version available directly from Firefox's website)
+- Weekly activities overview
+- Nightfall and rewards
+- Featured raids and dungeons
+- Trials of Osiris information
+- Dares of Eternity rotation
+- Offline support
+- Automatic updates at weekly reset
+- Clean, modern UI
 
-## Install
-- **Chrome**: Download .crx, enable Developer mode in `chrome://extensions/`, drag in the file.
+## Manual Installation from GitHub
 
-More Destiny 2 tools at [blueberries.gg](https://blueberries.gg/leveling/destiny-2-weekly-challenges/)!
+#### For Chrome
+1. Go to the [Releases page](https://github.com/ric-blueberrieGG/destiny-2-weekly-reset/releases)
+2. Download the latest `destiny2-weekly-reset-v1.1.0.zip` file
+3. Unzip the downloaded file to a folder on your computer
+4. Open Chrome and go to `chrome://extensions/`
+5. Enable "Developer mode" using the toggle in the top right
+6. Click "Load unpacked"
+7. Select the folder where you unzipped the extension
+8. The extension should now appear in your toolbar
+
+Note: When installing from GitHub:
+- You'll need to update manually by repeating these steps when new versions are released
+- Chrome may show a warning about developer mode extensions - this is normal for manually installed extensions
+
+### Loading in Chrome
+1. Open Chrome and go to `chrome://extensions`
+2. Enable "Developer mode"
+3. Click "Load unpacked"
+4. Select the `dist` directory
+
+### Loading in Firefox
+1. Open Firefox and go to `about:debugging`
+2. Click "This Firefox"
+3. Click "Load Temporary Add-on"
+4. Select any file in the `dist` directory
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Credits
+
+- Data provided by [blueberries.gg](https://blueberries.gg)
+- Icons and assets from Bungie's Destiny 2
+
+## Support
+
+For bugs and feature requests, please [open an issue](https://github.com/yourusername/destiny2-weekly-reset/issues) or email ric@blueberries.gg
