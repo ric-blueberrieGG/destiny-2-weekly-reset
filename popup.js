@@ -1,3 +1,138 @@
+// Constants
+const CACHE_DURATION = 86400000; // 24 hours in milliseconds
+const RESET_HOUR = 17; // UTC hour when weekly reset occurs
+const RESET_DAY = 2;  // Tuesday (0 = Sunday, 2 = Tuesday)
+
+// Date formatting options
+const DATE_FORMAT_OPTIONS = { 
+  weekday: 'long', 
+  year: 'numeric', 
+  month: 'long', 
+  day: 'numeric',
+  timeZone: 'UTC'
+};
+
+// Types
+/**
+ * @typedef {Object} Activity
+ * @property {string} name - Activity name
+ * @property {string} icon - Path to activity icon
+ * @property {string} content - Activity content
+ * @property {string} [reward] - Optional reward text
+ * @property {string} [rewardUrl] - Optional reward URL
+ */
+
+/**
+ * @typedef {Object} WeeklyData
+ * @property {string[][]} values - Raw data from spreadsheet
+ */
+
+/**
+ * @typedef {Object} CacheData
+ * @property {WeeklyData} weeklyData - Cached weekly data
+ * @property {string} lastFetch - Last fetch timestamp
+ */
+
+// Data fetching utilities
+/**
+ * Fetch data from cache or network
+ * @returns {Promise<WeeklyData>}
+ */
+async function fetchData() {
+  const cache = await chrome.storage.local.get(['weeklyData', 'lastFetch']);
+  const currentTime = new Date();
+  const lastFetch = cache.lastFetch ? new Date(cache.lastFetch) : null;
+  const isOffline = !navigator.onLine;
+
+  const needsUpdate = !lastFetch || 
+                     currentTime - lastFetch > CACHE_DURATION ||
+                     isNewWeek(lastFetch);
+
+  if (!needsUpdate && cache.weeklyData) {
+    console.log('Using cached data');
+    return cache.weeklyData;
+  }
+
+  console.log('Fetching fresh data');
+  const response = await chrome.runtime.sendMessage({ action: "getData" });
+  if (!response.data) {
+    throw new Error('Failed to fetch data from server');
+  }
+  return response.data;
+}
+
+/**
+ * Filter activities for current week
+ * @param {string[][]} activities - Raw activity data
+ * @returns {string[][]} Filtered activities
+ */
+function filterCurrentWeekActivities(activities) {
+  const currentUTC = new Date(Date.UTC(
+    new Date().getUTCFullYear(),
+    new Date().getUTCMonth(),
+    new Date().getUTCDate(),
+    new Date().getUTCHours(),
+    new Date().getUTCMinutes(),
+    new Date().getUTCSeconds()
+  ));
+
+  return activities.filter(row => {
+    if (!row[1]) return false;
+    
+    const fromDate = new Date(row[1]);
+    if (fromDate.toString() === 'Invalid Date') {
+      console.log('Failed to parse date:', row[1]);
+      return false;
+    }
+
+    fromDate.setUTCHours(RESET_HOUR, 0, 0, 0);
+    
+    const nextTuesday = new Date(fromDate);
+    nextTuesday.setDate(fromDate.getDate() + 7);
+    nextTuesday.setUTCHours(RESET_HOUR - 1, 59, 59, 999);
+    
+    return currentUTC >= fromDate && currentUTC <= nextTuesday;
+  });
+}
+
+/**
+ * Set refresh button state
+ * @param {HTMLButtonElement} button - Refresh button element
+ * @param {boolean} isLoading - Loading state
+ */
+function setRefreshButtonState(button, isLoading) {
+  const icon = button.querySelector('span');
+  button.disabled = isLoading;
+  button.style.opacity = isLoading ? '0.7' : '1';
+  if (isLoading) {
+    icon.classList.add('refresh-spin');
+  } else {
+    icon.classList.remove('refresh-spin');
+  }
+}
+
+/**
+ * Show error message to user
+ * @param {Error} error - Error object
+ * @param {HTMLElement} container - Container to show error in
+ */
+function handleError(error, container) {
+  console.error('Error:', error);
+  container.innerHTML = `
+    <li class="fade-in">
+      <div class="error-message">
+        Failed to load activities. ${error.message}
+        <br>
+        Please try again later or check your connection.
+      </div>
+    </li>
+  `;
+}
+
+/**
+ * Get the date range for the current weekly reset
+ * @returns {{start: Date, end: Date}}
+ */
 function getWeekRange() {
   const now = new Date();
   const cetOffset = 1 * 60 * 60 * 1000;
@@ -7,302 +142,567 @@ function getWeekRange() {
   const hours = cetTime.getHours();
   const minutes = cetTime.getMinutes();
 
-  let daysToSubtract;
-  if (dayOfWeek === 2 && (hours < 18 || (hours === 18 && minutes === 0))) {
-    daysToSubtract = 7;
-  } else {
-    daysToSubtract = (dayOfWeek + 5) % 7;
-  }
+  const daysToSubtract = (dayOfWeek === RESET_DAY && (hours < RESET_HOUR || (hours === RESET_HOUR && minutes === 0))) 
+    ? 7 
+    : (dayOfWeek + 5) % 7;
 
   const tuesdayStart = new Date(cetTime);
   tuesdayStart.setDate(cetTime.getDate() - daysToSubtract);
-  tuesdayStart.setHours(18, 0, 0, 0);
+  tuesdayStart.setHours(RESET_HOUR, 0, 0, 0);
   const tuesdayStartUTC = new Date(tuesdayStart.getTime() - cetOffset);
 
   const nextTuesdayEnd = new Date(tuesdayStartUTC);
   nextTuesdayEnd.setDate(tuesdayStartUTC.getDate() + 7);
-  nextTuesdayEnd.setHours(16, 59, 59, 999);
+  nextTuesdayEnd.setHours(RESET_HOUR - 1, 59, 59, 999);
 
   return { start: tuesdayStartUTC, end: nextTuesdayEnd };
 }
 
+/**
+ * Format a date according to the standard format
+ * @param {Date} date
+ * @returns {string}
+ */
 function formatDate(date) {
-  return date.toISOString().split('T')[0];
+  return date.toLocaleDateString(undefined, DATE_FORMAT_OPTIONS);
 }
 
-document.addEventListener('DOMContentLoaded', function() {
+/**
+ * Format an ISO date string
+ * @param {string} isoString
+ * @returns {string}
+ */
+function formatDateTime(isoString) {
+  return formatDate(new Date(isoString));
+}
+
+/**
+ * Check if it's time for a new weekly reset
+ * @param {string} lastFetchDate
+ * @returns {boolean}
+ */
+function isNewWeek(lastFetchDate) {
+  if (!lastFetchDate) return true;
+  
+  const lastFetch = new Date(lastFetchDate);
+  const now = new Date();
+  
+  const lastTuesday = new Date(now);
+  const day = lastTuesday.getUTCDay();
+  const diff = (day + 6) % 7;
+  lastTuesday.setUTCDate(lastTuesday.getUTCDate() - diff);
+  lastTuesday.setUTCHours(RESET_HOUR, 0, 0, 0);
+  
+  return lastFetch < lastTuesday;
+}
+
+/**
+ * Format the time remaining until next reset
+ * @param {Date} targetDate
+ * @returns {string}
+ */
+function formatTimeRemaining(targetDate) {
+  const now = new Date();
+  const diff = targetDate - now;
+  
+  if (diff <= 0) return "Reset is happening now!";
+  
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+  
+  const parts = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0 || days > 0) parts.push(`${hours}h`);
+  parts.push(`${minutes}m`);
+  
+  return `Next reset in: ${parts.join(' ')}`;
+}
+
+/**
+ * Update the countdown timer display
+ */
+function updateCountdown() {
+  const nextReset = new Date();
+  const day = nextReset.getUTCDay();
+  const daysUntilTuesday = (9 - day) % 7;
+  
+  nextReset.setUTCDate(nextReset.getUTCDate() + daysUntilTuesday);
+  nextReset.setUTCHours(RESET_HOUR, 0, 0, 0);
+  
+  const countdownElement = document.getElementById('countdown');
+  if (countdownElement) {
+    countdownElement.textContent = formatTimeRemaining(nextReset);
+  }
+}
+
+/**
+ * Create a styled refresh button
+ * @returns {HTMLButtonElement}
+ */
+function createRefreshButton() {
+  const refreshButton = document.createElement('button');
+  const refreshIcon = document.createElement('span');
+  refreshIcon.innerHTML = '&#x21BB;';
+  refreshButton.appendChild(refreshIcon);
+  
+  Object.assign(refreshButton.style, {
+    position: 'absolute',
+    top: '10px',
+    right: '10px',
+    padding: '4px 8px',
+    border: 'none',
+    borderRadius: '4px',
+    backgroundColor: '#2c2c2c',
+    color: 'white',
+    cursor: 'pointer',
+    transition: 'background-color 0.2s ease'
+  });
+
+  Object.assign(refreshIcon.style, {
+    fontSize: '16px',
+    lineHeight: '1',
+    display: 'inline-block'
+  });
+
+  refreshButton.title = 'Refresh data';
+  return refreshButton;
+}
+
+/**
+ * Create base styles for the extension
+ * @returns {HTMLStyleElement}
+ */
+function createStyles() {
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .fade-in {
+      opacity: 0;
+      animation: fadeIn 0.3s ease forwards;
+    }
+    .stagger-animation > * {
+      opacity: 0;
+      animation: fadeIn 0.3s ease forwards;
+    }
+    .stagger-animation > *:nth-child(1) { animation-delay: 0s; }
+    .stagger-animation > *:nth-child(2) { animation-delay: 0.1s; }
+    .stagger-animation > *:nth-child(3) { animation-delay: 0.2s; }
+    .stagger-animation > *:nth-child(4) { animation-delay: 0.3s; }
+    .stagger-animation > *:nth-child(5) { animation-delay: 0.4s; }
+    .offline-indicator {
+      text-align: center;
+      color: #888;
+      font-size: 12px;
+      padding: 8px;
+    }
+    .bottom-wrapper {
+      margin-top: 16px;
+      text-align: center;
+      margin-bottom: 10px;
+    }
+    .countdown-timer {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background-color: #1a1a1a;
+      color: white;
+      padding: 8px;
+      text-align: center;
+      font-size: 14px;
+      border-top: 1px solid #333;
+    }
+    .refresh-spin {
+      animation: spin 1s linear infinite;
+    }
+    button:hover {
+      background-color: #3c3c3c !important;
+    }
+    button:active {
+      background-color: #1c1c1c !important;
+      transform: scale(0.95);
+    }
+    button:disabled {
+      cursor: default !important;
+    }
+    button:disabled:hover {
+      background-color: #2c2c2c !important;
+    }
+    .activity {
+      display: flex;
+      align-items: center;
+    }
+    .activity .activity-icon {
+      margin-right: 8px;
+    }
+    .activity .activity-content {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .activity .activity-name,
+    .activity .reward {
+      margin: 0;
+    }
+    .activity a {
+      text-decoration: none;
+      border-bottom: 1px dotted currentColor;
+      color: inherit;
+    }
+    .activity a:hover {
+      border-bottom-style: solid;
+    }
+    .full-width .activity {
+      display: flex;
+      justify-content: center;
+    }
+    .full-width .activity-wrapper {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .full-width .activity .activity-content {
+      flex-direction: row;
+      gap: 8px;
+    }
+  `;
+  return style;
+}
+
+/**
+ * Create an activity element with icon and content
+ * @param {string} name - Activity name
+ * @param {string} iconPath - Path to activity icon
+ * @param {string} content - Activity content
+ * @param {string} reward - Reward text
+ * @param {string} rewardUrl - URL for reward link
+ * @returns {HTMLDivElement}
+ */
+function createActivityElement(name, iconPath, content, reward = '', rewardUrl = '') {
+  const div = document.createElement('div');
+  div.className = 'activity';
+  
+  const html = [];
+  if (iconPath) {
+    html.push(`<img src="${iconPath}" alt="${name}" class="activity-icon">`);
+  }
+  
+  html.push('<div class="activity-content">');
+  html.push(`<span class="activity-name">${content}</span>`);
+  
+  if (reward && reward !== '-') {
+    const rewardText = rewardUrl && rewardUrl !== '-' && rewardUrl.trim() !== '' 
+      ? `<a href="${rewardUrl}" target="_blank">${reward}</a>`
+      : reward;
+    html.push(`<span class="reward"><span class="reward-label">Reward: </span>${rewardText}</span>`);
+  }
+  
+  html.push('</div>');
+  div.innerHTML = html.join('');
+  return div;
+}
+
+// Activity creation functions
+/**
+ * Create a standalone activity section
+ * @param {string} label - Section label
+ * @param {string} content - Section content
+ * @returns {HTMLDivElement}
+ */
+function createStandaloneSection(label, content) {
+  const div = document.createElement('div');
+  div.className = 'standalone';
+  div.innerHTML = `<span class="label">${label}</span>: ${content}`;
+  return div;
+}
+
+/**
+ * Create a header for an activity section
+ * @param {string} text - Header text
+ * @param {string} [className] - Optional class name
+ * @returns {HTMLHeadingElement}
+ */
+function createActivityHeader(text, className = '') {
+  const header = document.createElement('h3');
+  if (className) header.className = className;
+  header.textContent = text;
+  return header;
+}
+
+/**
+ * Create a columns container
+ * @param {HTMLElement[]} columns - Array of column elements
+ * @returns {HTMLDivElement}
+ */
+function createColumnsContainer(columns) {
+  const container = document.createElement('div');
+  container.className = 'columns';
+  columns.forEach(col => container.appendChild(col));
+  return container;
+}
+
+/**
+ * Create a trials activity section
+ * @param {string} map - Map name
+ * @param {string} reward - Reward text
+ * @param {string} rewardUrl - Reward URL
+ * @returns {HTMLDivElement}
+ */
+function createTrialsSection(map, reward, rewardUrl) {
+  const container = document.createElement('div');
+  container.className = 'full-width';
+  
+  const header = createActivityHeader('TRIALS OF OSIRIS IS LIVE \u{1F534}');
+  container.appendChild(header);
+  
+  const activity = document.createElement('div');
+  activity.className = 'activity';
+  activity.innerHTML = `
+    <div class="activity-wrapper">
+      <img src="icons/trials.png" alt="Trials" class="activity-icon">
+      <div class="activity-content">
+        <span class="activity-name">Map: ${map}</span>
+        ${reward && reward !== '-' ? `<span class="reward"><span class="reward-label">Reward: </span>${rewardUrl && rewardUrl !== '-' && rewardUrl.trim() !== '' ? `<a href="${rewardUrl}" target="_blank">${reward}</a>` : reward}</span>` : ''}
+      </div>
+    </div>
+  `;
+  
+  container.appendChild(activity);
+  return container;
+}
+
+/**
+ * Create an activity with reward
+ * @param {Activity} activity - Activity details
+ * @returns {HTMLDivElement}
+ */
+function createActivityWithReward(activity) {
+  return createActivityElement(
+    activity.name,
+    activity.icon,
+    activity.content,
+    activity.reward,
+    activity.rewardUrl
+  );
+}
+
+/**
+ * Create an offline/cache indicator
+ * @param {boolean} isOffline - Whether the app is offline
+ * @param {Date} lastFetch - Last fetch timestamp
+ * @returns {HTMLDivElement}
+ */
+function createStatusIndicator(isOffline, lastFetch) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'bottom-wrapper';
+  
+  const indicator = document.createElement('div');
+  indicator.className = 'offline-indicator fade-in';
+  indicator.innerHTML = isOffline ? 
+    '📵 Offline mode' : 
+    `(Last updated: ${lastFetch?.toLocaleString() || 'Never'})`;
+  
+  wrapper.appendChild(indicator);
+  return wrapper;
+}
+
+/**
+ * Render activities for the current week
+ * @param {string[][]} activities - Activity data
+ * @param {string[]} headers - Column headers
+ * @param {HTMLElement} container - Container element
+ */
+function renderActivities(activities, headers, container) {
+  if (activities.length === 0) {
+    container.innerHTML = '<li class="fade-in">No activities this week.</li>';
+    return;
+  }
+
+  container.className = 'stagger-animation';
+  activities.forEach(row => {
+    const li = document.createElement('li');
+    li.className = 'week-entry';
+
+    // Event and Weekly Bonus (Standalone)
+    if (row[2]) li.appendChild(createStandaloneSection(headers[2], row[2]));
+    if (row[3]) li.appendChild(createStandaloneSection(headers[3], row[3]));
+
+    // Trials of Osiris
+    if (row[4]) {
+      li.appendChild(createTrialsSection(row[4], row[5], row[6]));
+    }
+
+    // Two-column activities (Nightfall and Exotic Mission)
+    const columnsDiv = createColumnsContainer([
+      createActivityColumn('NIGHTFALL', 'nightfall.png', row[7], row[8], row[9]),
+      createActivityColumn('EXOTIC MISSION', 'exotic.png', row[10], row[11], row[12])
+    ]);
+    li.appendChild(columnsDiv);
+
+    // Featured Raids
+    if (row[13] || row[16]) {
+      li.appendChild(createActivityHeader('FEATURED RAIDS', 'merged-header'));
+      const raidsDiv = createColumnsContainer([
+        createActivityColumn('', 'raid.png', row[13], row[14], row[15]),
+        createActivityColumn('', 'raid.png', row[16], row[17], row[18])
+      ]);
+      li.appendChild(raidsDiv);
+    }
+
+    // Featured Dungeons
+          if (row[19] || row[22]) {
+      li.appendChild(createActivityHeader('FEATURED DUNGEONS', 'merged-header'));
+      const dungeonsDiv = createColumnsContainer([
+        createActivityColumn('', 'dungeon.png', row[19], row[20], row[21]),
+        createActivityColumn('', 'dungeon.png', row[22], row[23], row[24])
+      ]);
+      li.appendChild(dungeonsDiv);
+    }
+
+    // Other Activities
+    if (row[25] || row[27]) {
+      li.appendChild(createActivityHeader('OTHER ACTIVITIES', 'merged-header'));
+      const otherDiv = createColumnsContainer([
+        createActivityColumn('Dares of Eternity', '', row[25], '', row[26], true),
+        createActivityColumn(headers[27], '', row[27], '', '')
+      ]);
+      li.appendChild(otherDiv);
+    }
+
+    // Vex Incursion Zone
+    if (row[28]) {
+      li.appendChild(createStandaloneSection(headers[28], row[28]));
+    }
+
+    container.appendChild(li);
+  });
+}
+
+/**
+ * Create an activity column
+ * @param {string} header - Column header
+ * @param {string} iconName - Icon filename
+ * @param {string} content - Activity content
+ * @param {string} reward - Reward text
+ * @param {string} rewardUrl - Reward URL
+ * @param {boolean} [isDares] - Whether this is a Dares of Eternity section
+ * @returns {HTMLDivElement}
+ */
+function createActivityColumn(header, iconName, content, reward, rewardUrl, isDares = false) {
+  const column = document.createElement('div');
+  
+  if (header) {
+    column.appendChild(createActivityHeader(header));
+  }
+  
+  if (content) {
+    if (isDares) {
+      // Special handling for Dares of Eternity
+      const activity = document.createElement('div');
+      activity.className = 'activity';
+      activity.innerHTML = `
+        <div class="activity-content">
+          <span class="activity-name">${content}</span>
+        </div>
+      `;
+      column.appendChild(activity);
+    } else {
+      const activity = createActivityWithReward({
+        name: header || 'Activity',
+        icon: iconName ? `icons/${iconName}` : '',
+        content,
+        reward,
+        rewardUrl
+      });
+      column.appendChild(activity);
+    }
+  }
+  
+  return column;
+}
+
+/**
+ * Initialize the application
+ */
+async function initializeApp() {
   const list = document.getElementById('activitiesList');
   const weekInfoDiv = document.getElementById('weekInfo');
-  const week = getWeekRange();
-  const startDate = formatDate(week.start);
-  const endDate = formatDate(week.end);
-
-  console.log(`Filtering for current week from ${startDate} to ${endDate}`);
-
-  const sheetUrl = 'https://sheets.googleapis.com/v4/spreadsheets/1A4Tyg_hfhbcr1iHAyvmKxRhUfWdTZ4Z299rCbskGowc/values/Activities_Beta?key=AIzaSyDS6MGS3L13Uc9KoGU6RmG4AjqOE3rNaxs';
-
-  fetch(sheetUrl)
-    .then(response => {
-      if (!response.ok) {
-        throw new Error(`HTTP error! Status: ${response.status}`);
-      }
-      return response.json();
-    })
-    .then(data => {
-      console.log('API Response:', data);
-      if (!data.values || data.values.length === 0) {
-        list.innerHTML = '<li>No data found in the sheet.</li>';
-        return;
-      }
-
-      const rows = data.values;
-      const headers = rows[0]; // 27 columns
-      const activities = rows.slice(1);
-
-      const now = new Date();
-      const cetOffset = 1 * 60 * 60 * 1000;
-      const currentCET = new Date(now.getTime() + cetOffset - now.getTimezoneOffset() * 60 * 1000);
-      const currentUTC = new Date(currentCET.getTime() - cetOffset);
-
-      const thisWeek = activities.filter(row => {
-        const fromDate = new Date(row[1] + 'T17:00:00Z');
-        const nextTuesday = new Date(fromDate);
-        nextTuesday.setDate(fromDate.getDate() + 7);
-        nextTuesday.setHours(16, 59, 59, 999);
-        return currentUTC >= fromDate && currentUTC <= nextTuesday;
-      });
-
-      if (thisWeek.length === 0) {
-        list.innerHTML = '<li>No activities this week.</li>';
+  
+  // Initialize UI elements
+  const refreshButton = createRefreshButton();
+  document.body.appendChild(refreshButton);
+  document.head.appendChild(createStyles());
+  
+  // Add refresh button click handler
+  refreshButton.addEventListener('click', async () => {
+    try {
+      setRefreshButtonState(refreshButton, true);
+      await chrome.runtime.sendMessage({ action: "clearCache" });
+      const response = await chrome.runtime.sendMessage({ action: "getData" });
+      if (response.data) {
+        location.reload();
       } else {
-        thisWeek.forEach(row => {
-          const li = document.createElement('li');
-          li.className = 'week-entry';
-
-          weekInfoDiv.innerHTML = `<span class="label">${headers[0]}</span>: ${row[0]} | <span class="label">${headers[1]}</span> ${row[1]}`;
-
-          // Event (Full-Width, Standalone)
-          if (row[2]) {
-            const eventDiv = document.createElement('div');
-            eventDiv.className = 'standalone';
-            eventDiv.innerHTML = `<span class="label">${headers[2]}</span>: ${row[2]}`;
-            li.appendChild(eventDiv);
-          }
-
-          // Weekly Bonus (Full-Width, Standalone)
-          if (row[3]) {
-            const bonusDiv = document.createElement('div');
-            bonusDiv.className = 'standalone';
-            bonusDiv.innerHTML = `<span class="label">${headers[3]}</span>: ${row[3]}`;
-            li.appendChild(bonusDiv);
-          }
-
-          // Trials of Osiris (Full-Width, Individual Header)
-          if (row[4]) {
-            const trialsDiv = document.createElement('div');
-            trialsDiv.className = 'full-width';
-            const trialsHeader = document.createElement('h3');
-            trialsHeader.textContent = 'TRIALS OF OSIRIS IS LIVE 🔴';
-            trialsDiv.appendChild(trialsHeader);
-
-            const trialsRow = document.createElement('div');
-            trialsRow.className = 'trials-row';
-            trialsRow.innerHTML = `
-              <img src="icons/trials.png" alt="Trials" class="activity-icon">
-              <div class="activity-content">
-                <span class="activity-name">Map: ${row[4]}</span>
-                ${row[5] && row[5] !== '-' ? `<span class="reward"><span class="reward-label">Reward: </span>${row[6] && row[6] !== '-' && row[6].trim() !== '' ? `<a href="${row[6]}" target="_blank">${row[5]}</a>` : row[5]}</span>` : ''}
-              </div>
-            `;
-            trialsDiv.appendChild(trialsRow);
-            li.appendChild(trialsDiv);
-          }
-
-          // Two Columns Container
-          const columnsDiv = document.createElement('div');
-          columnsDiv.className = 'columns';
-
-          // Column 1
-          const col1 = document.createElement('div');
-
-          // Nightfall (Column 1, Individual Header)
-          if (row[7]) {
-            const nightfallHeader = document.createElement('h3');
-            nightfallHeader.textContent = 'NIGHTFALL';
-            col1.appendChild(nightfallHeader);
-
-            const nightfallDiv = document.createElement('div');
-            nightfallDiv.className = 'activity';
-            nightfallDiv.innerHTML = `
-              <img src="icons/nightfall.png" alt="Nightfall" class="activity-icon">
-              <div class="activity-content">
-                <span class="activity-name">${row[7]}</span>
-                ${row[8] && row[8] !== '-' ? `<span class="reward"><span class="reward-label">Reward: </span>${row[9] && row[9] !== '-' && row[9].trim() !== '' ? `<a href="${row[9]}" target="_blank">${row[8]}</a>` : row[8]}</span>` : ''}
-              </div>
-            `;
-            col1.appendChild(nightfallDiv);
-          }
-
-          // Column 2
-          const col2 = document.createElement('div');
-
-          // Exotic Mission (Column 2, Individual Header)
-          if (row[10]) {
-            const exoticHeader = document.createElement('h3');
-            exoticHeader.textContent = 'EXOTIC MISSION';
-            col2.appendChild(exoticHeader);
-
-            const exoticDiv = document.createElement('div');
-            exoticDiv.className = 'activity';
-            exoticDiv.innerHTML = `
-              <img src="icons/exotic.png" alt="Exotic Mission" class="activity-icon">
-              <div class="activity-content">
-                <span class="activity-name">${row[10]}</span>
-                ${row[11] && row[11] !== '-' ? `<span class="reward"><span class="reward-label">Reward: </span>${row[12] && row[12] !== '-' && row[12].trim() !== '' ? `<a href="${row[12]}" target="_blank">${row[11]}</a>` : row[11]}</span>` : ''}
-              </div>
-            `;
-            col2.appendChild(exoticDiv);
-          }
-
-          columnsDiv.appendChild(col1);
-          columnsDiv.appendChild(col2);
-          li.appendChild(columnsDiv);
-
-          // Featured Raids (Full-Width, Merged Header)
-          if (row[13] || row[16]) {
-            const raidsHeader = document.createElement('h3');
-            raidsHeader.className = 'merged-header';
-            raidsHeader.textContent = 'FEATURED RAIDS';
-            li.appendChild(raidsHeader);
-
-            const raidsColumnsDiv = document.createElement('div');
-            raidsColumnsDiv.className = 'columns';
-
-            // Raid 1 (Column 1)
-            if (row[13]) {
-              const raid1Div = document.createElement('div');
-              raid1Div.className = 'activity';
-              raid1Div.innerHTML = `
-                <img src="icons/raid.png" alt="Raid" class="activity-icon">
-                <div class="activity-content">
-                  <span class="activity-name">${row[13]}</span>
-                  ${row[14] && row[14] !== '-' ? `<span class="reward"><span class="reward-label">Reward: </span>${row[15] && row[15] !== '-' && row[15].trim() !== '' ? `<a href="${row[15]}" target="_blank">${row[14]}</a>` : row[14]}</span>` : ''}
-                </div>
-              `;
-              raidsColumnsDiv.appendChild(raid1Div);
-            }
-
-            // Raid 2 (Column 2)
-            if (row[16]) {
-              const raid2Div = document.createElement('div');
-              raid2Div.className = 'activity';
-              raid2Div.innerHTML = `
-                <img src="icons/raid.png" alt="Raid" class="activity-icon">
-                <div class="activity-content">
-                  <span class="activity-name">${row[16]}</span>
-                  ${row[17] && row[17] !== '-' ? `<span class="reward"><span class="reward-label">Reward: </span>${row[18] && row[18] !== '-' && row[18].trim() !== '' ? `<a href="${row[18]}" target="_blank">${row[17]}</a>` : row[17]}</span>` : ''}
-                </div>
-              `;
-              raidsColumnsDiv.appendChild(raid2Div);
-            }
-
-            li.appendChild(raidsColumnsDiv);
-          }
-
-          // Featured Dungeons (Full-Width, Merged Header)
-          if (row[19] || row[22]) {
-            const dungeonsHeader = document.createElement('h3');
-            dungeonsHeader.className = 'merged-header';
-            dungeonsHeader.textContent = 'FEATURED DUNGEONS';
-            li.appendChild(dungeonsHeader);
-
-            const dungeonsColumnsDiv = document.createElement('div');
-            dungeonsColumnsDiv.className = 'columns';
-
-            // Dungeon 1 (Column 1)
-            if (row[19]) {
-              const dungeon1Div = document.createElement('div');
-              dungeon1Div.className = 'activity';
-              dungeon1Div.innerHTML = `
-                <img src="icons/dungeon.png" alt="Dungeon" class="activity-icon">
-                <div class="activity-content">
-                  <span class="activity-name">${row[19]}</span>
-                  ${row[20] && row[20] !== '-' ? `<span class="reward"><span class="reward-label">Reward: </span>${row[21] && row[21] !== '-' && row[21].trim() !== '' ? `<a href="${row[21]}" target="_blank">${row[20]}</a>` : row[20]}</span>` : ''}
-                </div>
-              `;
-              dungeonsColumnsDiv.appendChild(dungeon1Div);
-            }
-
-            // Dungeon 2 (Column 2)
-            if (row[22]) {
-              const dungeon2Div = document.createElement('div');
-              dungeon2Div.className = 'activity';
-              dungeon2Div.innerHTML = `
-                <img src="icons/dungeon.png" alt="Dungeon" class="activity-icon">
-                <div class="activity-content">
-                  <span class="activity-name">${row[22]}</span>
-                  ${row[23] && row[23] !== '-' ? `<span class="reward"><span class="reward-label">Reward: </span>${row[24] && row[24] !== '-' && row[24].trim() !== '' ? `<a href="${row[24]}" target="_blank">${row[23]}</a>` : row[23]}</span>` : ''}
-                </div>
-              `;
-              dungeonsColumnsDiv.appendChild(dungeon2Div);
-            }
-
-            li.appendChild(dungeonsColumnsDiv);
-          }
-
-          // Other Activities (Full-Width, Merged Header)
-          if (row[25] || row[27]) {
-            const otherHeader = document.createElement('h3');
-            otherHeader.className = 'merged-header';
-            otherHeader.textContent = 'OTHER ACTIVITIES';
-            li.appendChild(otherHeader);
-
-            const otherColumnsDiv = document.createElement('div');
-            otherColumnsDiv.className = 'columns';
-
-            // Dares of Eternity (Column 1)
-            if (row[25]) {
-              const daresDiv = document.createElement('div');
-              daresDiv.className = 'activity';
-              daresDiv.innerHTML = `
-                <div class="activity-content">
-                  <span class="activity-name">${headers[25]}</span>
-                  ${row[25] && row[25] !== '-' ? `<span class="reward"><span class="reward-label">Rewards: </span>${row[26] && row[26] !== '-' && row[26].trim() !== '' ? `<a href="${row[26]}" target="_blank">Rotation #1</a>` : 'Rotation #1'}</span>` : ''}
-                </div>
-              `;
-              otherColumnsDiv.appendChild(daresDiv);
-            }
-
-            // Ascendant Challenge (Column 2)
-            if (row[27]) {
-              const ascendantDiv = document.createElement('div');
-              ascendantDiv.className = 'activity';
-              ascendantDiv.innerHTML = `
-                <div class="activity-content">
-                  <span class="activity-name">${headers[27]}</span>
-                  <span class="reward">${row[27]}</span>
-                </div>
-              `;
-              otherColumnsDiv.appendChild(ascendantDiv);
-            }
-
-            li.appendChild(otherColumnsDiv);
-          }
-
-          // Vex Incursion Zone (Full-Width, Standalone)
-          if (row[28]) {
-            const vexDiv = document.createElement('div');
-            vexDiv.className = 'standalone';
-            vexDiv.innerHTML = `<span class="label">${headers[28]}</span> ${row[28]}`;
-            li.appendChild(vexDiv);
-          }
-
-          list.appendChild(li);
-        });
+        throw new Error('Failed to fetch new data');
       }
-    })
-    .catch(error => {
-      list.innerHTML = '<li>No data found in the sheet.</li>';
-      console.error('Fetch Error:', error);
-    });
+    } catch (error) {
+      setRefreshButtonState(refreshButton, false);
+      alert('Failed to refresh data. Please try again.');
+    }
+  });
+
+  try {
+    setRefreshButtonState(refreshButton, true);
+    const data = await fetchData();
+
+    if (!data?.values?.length) {
+      throw new Error('No data available');
+    }
+
+    const [headers, ...activities] = data.values;
+    const thisWeek = filterCurrentWeekActivities(activities);
+    
+    // Update week info
+    if (thisWeek.length > 0) {
+      const row = thisWeek[0];
+      weekInfoDiv.innerHTML = `<span class="label">${headers[0]}</span>: ${row[0]} | <span class="label">${headers[1]}</span> ${formatDateTime(row[1])}`;
+    }
+
+    // Render activities
+    renderActivities(thisWeek, headers, list);
+
+    // Add offline indicator if needed
+    if (!navigator.onLine) {
+      list.appendChild(createStatusIndicator(true, null));
+    }
+
+  } catch (error) {
+    handleError(error, list);
+  } finally {
+    setRefreshButtonState(refreshButton, false);
+  }
+
+  // Update countdown
+  updateCountdown();
+  setInterval(updateCountdown, 60000);
+}
+
+// Initialize app when DOM is ready
+document.addEventListener('DOMContentLoaded', initializeApp);
+
+// Handle online/offline events
+window.addEventListener('online', () => location.reload());
+window.addEventListener('offline', () => {
+  const existingIndicator = document.querySelector('.offline-indicator');
+  if (!existingIndicator) {
+    document.getElementById('activitiesList')
+      .appendChild(createStatusIndicator(true, null));
+  }
 });
