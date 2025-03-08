@@ -1,21 +1,36 @@
 {
   "manifest_version": 3,
   "name": "Destiny 2 Weekly Reset",
-  "version": "1.0.1",
-  "description": "Displays weekly Destiny 2 activities from blueberries.gg",
+  "version": "1.1.0",
+  "description": "Track Destiny 2 weekly activities, including Nightfall, Raids, Dungeons, and more. Updates every Tuesday at reset.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
-      "16": "icon16.png",
-      "48": "icon48.png",
-      "128": "icon128.png"
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
     }
   },
-  "icons": {
-    "16": "icon16.png",
-    "48": "icon48.png",
-    "128": "icon128.png"
+  "permissions": [
+    "storage"
+  ],
+  "background": {
+    "scripts": ["background.js"]
   },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "{2d5bdafd-7d6e-4639-87b4-9ddae38ea383}"
+    }
+  },
+  "host_permissions": [
+    "https://api.blueberries.gg/*",
+    "https://script.google.com/*"
+  ],
   "web_accessible_resources": [{
     "resources": ["icons/*"],
     "matches": ["<all_urls>"]
